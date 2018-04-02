@@ -1,0 +1,2 @@
+#!/bin/bash
+$(which xbg) -s "$(</tmp/xbg_mplexus)" -$1 > /dev/null

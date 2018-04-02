@@ -1,0 +1,489 @@
+#!/usr/bin/perl -w
+
+#
+# Random Background Setter version 0.1.10.
+#
+# (c)2002 Mike Plexousakis
+# mplexus@csd.uoc.gr
+# http://www.csd.uoc.gr/~mplexus
+#
+# Randomly change your desktop background.
+# Supply the directory to search for images.
+# Selects an image randomly. Uses xsetbg to
+# set the background.
+# It tries to read $tmp_file and get the
+# last image that was set as background with
+# thie program. This image will not be set
+# background if found by the search - this is
+# to ensure a new image for background every time!
+#
+# For comments/support please email me!
+
+use Getopt::Std;
+
+my $dir;
+my $file;
+my $version = "v0.1.10";
+my @Files = ();
+my $setbg;
+my $_mode = 0;
+my $mode;
+my $tmp_file = "/tmp/xbg_";
+my $tmp_nfile = "/tmp/xbg_n";
+my $whoami;
+my $source = 1;	
+my %args = ();
+my $screen_mode = 0;
+my $selection_mode = "r";
+
+sub scan;
+sub usage;
+sub info;
+sub selectFileRandomly;
+sub selectFileOrderly;
+sub set_image;
+sub set_image_file;
+sub search_xsetter;
+sub is_image;
+
+srand;
+
+# Arguments:
+# -s takes an argument
+# -r, -h, -v are boolean flags
+getopts ('s:rhvtfco:', \%args);
+
+if($args{'h'})
+{
+	usage();
+	exit(1);
+}
+
+if($args{'v'})
+{
+	info();
+	exit(1);
+}
+
+if($args{'r'})
+	{$mode = 1;}
+else
+	{$mode = $_mode;}
+
+$whoami = getlogin || (getpwuid($<))[0];
+if(defined($whoami))
+{
+	$tmp_file .= $whoami;
+}
+
+if($args{'t'})
+{
+	$screen_mode = 0;
+}
+elsif($args{'f'})
+{
+	$screen_mode = 1;
+}
+elsif($args{'c'})
+{
+	$screen_mode = 2;
+}
+
+if($args{'o'}){
+  $selection_mode = $args{'o'};
+}
+
+if($args{'s'})
+{
+	$dir = $args{'s'};
+}
+if(!(defined $dir))
+{
+	print STDOUT "You have to specify a source file/directory.\nType -h for help.\n";
+	exit(1);
+}
+if(-f $dir)
+{
+	if(is_image($dir) == 1)
+	{
+		$setbg = search_xsetter();
+		if($setbg eq "")
+		{
+			die "Didn't find xsetbg! exiting.\n";
+		}
+		set_image_file($dir);
+		exit(0);
+	}
+	else
+	{
+		print STDOUT "Not an image file: $dir\n";
+		exit(1);
+	}
+}
+elsif(-d $dir)
+{
+	$setbg = search_xsetter();
+	if($setbg eq "")
+	{
+		die "Didn't find xloader! exiting.\n";
+	}
+	print STDOUT "Working directory: $dir\n";
+	scan($dir);
+	if($selection_mode eq "r") {
+	  $j = selectFileRandomly();
+	}
+	elsif($selection_mode eq "a") {
+	  $j = selectFileOrderly("a");
+	}
+	elsif($selection_mode eq "d"){
+	  $j = selectFileOrderly("d");
+	}
+	else{
+	  $j = selectFileRandomly();
+	}
+	set_image($j);
+	exit(0);
+}
+#else..
+print STDOUT "Don't see \"$dir\"!\n";
+exit(1);
+
+
+#
+# Scan directory.
+# (Directory always has a '/' at the end.
+# This is assumed and not checked.
+#
+sub scan
+{
+	my $d = shift();
+	my @tfiles = ();
+	my $full_name;
+	my $read = 1;
+	my $last_bg = "";
+	my $tmp_read = 0;
+
+	if(!(defined $d))
+	{
+		return;
+	}
+
+	if(!($d =~ /\/$/))
+	{
+	        $d = $d.'/';
+	}
+	$read = 1;
+	opendir(DIR, $d) or $read = 0;
+	if($read == 1)
+	{
+		#print STDOUT "working directory \"$d\":\n";
+		@tfiles = grep !/^\./, readdir(DIR);
+		open(TMP, "<$tmp_file") or $tmp_read = -1;
+		if($tmp_read == -1)
+		{
+			warn "Can't read $tmp_file! - ignoring..\n";
+		}
+		elsif($tmp_read == 0)
+		{
+			$last_bg = <TMP>;
+			chomp($last_bg);
+			close(TMP);
+			$tmp_read = 1;
+		}
+		foreach(@tfiles)
+		{
+			$full_name = $d.$_;
+			if(is_image($full_name) == 1)
+			{
+				if($selection_mode eq "r"){
+					if($tmp_read == 1 && defined($last_bg))
+					{
+						if($full_name eq $last_bg)
+						{
+							next;
+						}
+					}
+			      	}
+				push(@Files, $full_name);
+			}
+			elsif((-d $full_name) && ($mode == 1))
+			{
+				scan($full_name);
+			}
+		}
+		closedir(DIR);
+	}
+	elsif($read == 0)
+	{
+		warn "Can't open directory: \"$d\".\n";
+	}
+}
+
+
+#
+# Select random entry from array @Files.
+#
+sub selectFileRandomly
+{
+	my $i;
+	my $n;
+	$n = $#Files;
+	if($n < 0)
+	{
+		return -1;
+	}
+	$n = $n + 1;
+	$i = int(rand $n);
+	return $i;
+}
+
+
+# Select "next" entry from array @Files, according to the
+# numbering saved in a tmp file.
+sub selectFileOrderly
+{
+  my $mode = shift();
+  if(!(defined($mode))) {
+    $mode = "a";
+  }
+  if($mode ne "a" && $mode ne "d"){
+    $mode = "a";
+  }
+  my $i = 1;
+  open(NFILE, "<$tmp_nfile") or $i=0 ;
+  if($i == 0){
+    $line = 0;
+  }
+  else{
+    $line = <NFILE>;
+    close(NFILE);
+    chomp($line);
+  }
+  $n = $#Files;
+  if($n < 0){
+    return -1;
+  }
+  $n = $n + 1;
+#  if($line>$n || $line<0){
+#    $line = 0;
+#  }
+  if($mode eq "a"){
+   $i = ($line + 1) % $n;
+  }
+  elsif($mode eq "d"){
+   $i = ($line - 1) % $n;
+  }
+  open(NFILE2, ">$tmp_nfile") or return 0 ;
+  print NFILE2 "$i\n";
+  close(NFILE2);
+  return $i;
+}
+
+
+#
+# Returns 1 if argument file is an image file.
+# Otherwise returns 0.
+#
+sub is_image
+{
+	my $file = shift();
+	if(!(defined $file))
+	{
+		return 0;
+	}
+
+	#print STDOUT "File: $file ... ";
+	if(! (-e $file))
+	{
+		#print STDOUT "not exists\n";
+		return 0;
+	}
+	if(! (-B $file))
+	{
+		#print STDOUT "no binary\n";
+		return 0;
+	}
+	if(! (-f $file))
+	{
+		#print STDOUT "no plain file\n";
+		return 0;
+	}
+	if(-z $file)
+	{
+		#print STDOUT "zero size\n";
+		return 0;
+	}
+	if( ($file =~ /.jpg$/)
+	 || ($file =~ /.JPG$/)
+	 || ($file =~ /.bmp$/)
+	 || ($file =~ /.BMP$/)
+	 || ($file =~ /.png$/)
+	 || ($file =~ /.PNG$/)
+	 || ($file =~ /.gif$/)
+ 	 || ($file =~ /.GIF$/) )
+	{
+		#print STDOUT "OK\n";
+		return 1;
+	}
+	#print STDOUT "neither!\n";
+	return 0;
+}
+
+
+#
+# Set desktop background image.
+# The image is $Files[i].
+# Argument is i.
+#
+sub set_image
+{
+	my $i = shift();
+	if(!(defined $i))
+	{
+		exit(1);
+	}
+	if($i == -1)
+	{
+		print STDOUT "No image files found.\n";
+		exit(1);
+	}
+	if($setbg =~ /=$/)
+	{
+		system("$setbg\"$Files[$i]\"");
+		#system("gsettings set org.gnome.desktop.background picture-uri \"file:///$Files[$i]\"");
+		#system("xfconf-query --channel xfce4-desktop --property /backdrop/screen0/monitor0/image-path --set \"$Files[$i]\"");
+		system("xfconf-query --channel xfce4-desktop --property /backdrop/screen0/monitor0/workspace0/last-image --set \"$Files[$i]\"");
+	}
+	else
+	{
+		system("$setbg \"$Files[$i]\"");
+		#system("gsettings set org.gnome.desktop.background picture-uri \"file:///$Files[$i]\"");
+		#system("xfconf-query --channel xfce4-desktop --property /backdrop/screen0/monitor0/image-path --set \"$Files[$i]\"");
+		system("xfconf-query --channel xfce4-desktop --property /backdrop/screen0/monitor0/workspace0/last-image --set \"$Files[$i]\"");
+	}
+	print STDOUT "\"$Files[$i]\"\n";
+	open (TMP, ">$tmp_file") or return;
+	print TMP "$Files[$i]\n";
+	close(TMP);
+
+	#system("gsettings set org.gnome.desktop.background picture-uri file:///$Files[$i]");
+
+	return;
+}
+
+
+
+#
+# Set desktop background image.
+# Argument is the image file.
+#
+sub set_image_file
+{
+	my $file = shift();
+	if(!(defined $file))
+	{
+		exit(1);
+	}
+	if($setbg =~ /=$/)
+	{
+		system("$setbg\"$file\"");
+	}
+	else
+	{
+		system("$setbg \"$file\"");
+	}
+        #system("gsettings set org.gnome.desktop.background picture-uri \"file:///$file\"");
+	#system("xfconf-query --channel xfce4-desktop --property /backdrop/screen0/monitor0/image-path --set \"$file\"");
+	system("xfconf-query --channel xfce4-desktop --property /backdrop/screen0/monitor0/workspace0/last-image --set \"$file\"");
+	print STDOUT "\"$file\"\n";
+	open (TMP, ">$tmp_file") or return;
+	print TMP "$file\n";
+	close(TMP);
+	return;
+}
+
+
+
+#
+# Find out what program to use to change the
+# wallpaper. Try xsetbg!
+#
+sub search_xsetter
+{
+	my $i = "";
+	$i = system("which xsri 1> /dev/null 2> /dev/null");
+	if($i == 0)
+	{
+		if(defined $screen_mode)
+		{
+			if($screen_mode == 0)
+			{
+				return "xsri --tile=";
+			}
+			elsif($screen_mode == 1)
+			{
+				return "xsri --scale-width=100 --scale-height=100 --emblem=";
+			}
+			elsif($screen_mode == 2)
+			{
+				return "xsri --center-x --center-y --emblem=";
+			}
+		}
+		return "xsri --tile=";
+	}
+        $i = system("which xsetbg 1> /dev/null 2> /dev/null");
+        if($i == 0)
+        {
+                if(defined $screen_mode)
+                {
+                        if($screen_mode == 0)
+                        {
+                                return "xsetbg -onroot ";
+                        }
+                        elsif($screen_mode == 1)
+                        {
+                                return "xsetbg -fullscreen ";
+                        }
+                        elsif($screen_mode == 2)
+                        {
+                                return "xsetbg -center ";
+                        }
+                }
+                return "xsetbg";
+        }
+	return "";
+}
+
+
+#
+# Usage.
+#
+sub usage
+{
+	print STDOUT "Usage:\n";
+	print STDOUT "$0  -s Source [-r] [[-h] [-v]] [image options] [-o order]\n";
+	print STDOUT "\t-s Source file or directory\n";
+	print STDOUT "\t-o Ordered search within directory\n";
+	print STDOUT "\t-r Recursive directory search\n";
+	print STDOUT "\t-h Help and exit\n";
+	print STDOUT "\t-v Version info and exit\n\n";
+        print STDOUT "image options:\n";
+        print STDOUT "\t-f Fullscreen\n";
+        print STDOUT "\t-t Tiled (default)\n";
+	print STDOUT "\t-c Centered\n";
+	print STDOUT "\tFor multiple flags the priority goes: -t > -f > -c\n";
+	print STDOUT "\norder options\n";
+	print STDOUT "\t-o a Accending\n";
+	print STDOUT "\t-o d Deccending\n";
+	print STDOUT "\t-o r Random (default)\n";
+}
+
+
+#
+# Version info.
+#
+sub info
+{
+	print STDOUT "$0 $version by Mike Plexousakis.\n";
+	print STDOUT "email: mplexus\@csd.uoc.gr\n";
+}
